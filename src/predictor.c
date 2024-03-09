@@ -11,9 +11,11 @@
 //
 // TODO:Student Information
 //
-const char *studentName = "Haoyu Liu && ";
+
+const char *studentName = "Haoyu Liu && ZIJIE DAI";
 const char *studentID   = "A59024691 && ";
-const char *email       = "hal148@ucsd.edu && ";
+const char *email       = "hal148@ucsd.edu && z2dai@ucsd.edu";
+
 
 //------------------------------------//
 //      Predictor Configuration       //
@@ -33,11 +35,11 @@ int verbose;
 //      Predictor Data Structures     //
 //------------------------------------//
 
-//
-//TODO: Add your own Branch Predictor data structures here
-//
+/**********GShare**********/
+uint8_t* gshare_table;  // Global history table
+uint32_t ghistory;      // Global history register
 
-// For Tournament:
+/**********Tournament**********/
 
 uint32_t globalHistory; // Global History Register
 uint32_t* localHistoryTable;
@@ -47,21 +49,36 @@ uint8_t* selectorTable;
 
 
 //------------------------------------//
+//       Gshare Helper Functions         //
+//------------------------------------//
+
+// Get the index of the GShare table
+int gs_get_table_index(uint32_t pc){
+  // Get the lower bits of the PC
+  uint32_t pc_lower_bits = pc & ((1 << ghistoryBits) - 1);
+  // XOR the lower bits of the PC with the global history
+  return (ghistory ^ pc_lower_bits);
+}
+
+//------------------------------------//
 //        Predictor Functions         //
 //------------------------------------//
+
 
 // Initialize the predictor
 //
 void
 init_predictor()
 {
-  //
-  //TODO: Initialize Branch Predictor Data Structures
-  //
     switch (bpType) {
     case STATIC:
         return;
     case GSHARE:
+        ghistory = 0;
+        gshare_table = (uint8_t*)malloc((1<<ghistoryBits)*sizeof(uint8_t));
+        for(int i = 0; i < (1<<ghistoryBits); i++){
+          gshare_table[i] = WN;
+        }
     case TOURNAMENT:
         globalHistory = 0;
 
@@ -80,8 +97,6 @@ init_predictor()
     default:
         break;
     }
-
-    
 }
 
 // Make a prediction for conditional branch instruction at PC 'pc'
@@ -91,15 +106,17 @@ init_predictor()
 uint8_t
 make_prediction(uint32_t pc)
 {
-  //
-  //TODO: Implement prediction scheme
-  //
+
+  uint32_t gs_index;// Table index used by GShare
 
   // Make a prediction based on the bpType
   switch (bpType) {
     case STATIC:
       return TAKEN;
     case GSHARE:
+      gs_index = gs_get_table_index(pc);
+      // If the counter value is SN or WN, predict NOTTAKEN,otherwise predict TAKEN
+      return (gshare_table[gs_index] >= WT) ? TAKEN : NOTTAKEN;
     case TOURNAMENT:
         return tournament_predict(pc);
     case CUSTOM:
@@ -141,13 +158,24 @@ tournament_predict(uint32_t pc) {
 void
 train_predictor(uint32_t pc, uint8_t outcome)
 {
-  //
-  //TODO: Implement Predictor training
-  //
+    uint32_t gs_index,gs_mask;
     switch (bpType) {
     case STATIC:
         return;
     case GSHARE:
+              // Calculate the index into the GShare table
+              gs_index = gs_get_table_index(pc);
+              // Update the counter based on the actual outcome
+              if (outcome == TAKEN) {
+                  gshare_table[gs_index] = (gshare_table[gs_index] < ST) ? gshare_table[gs_index] + 1 : ST;
+              } else {
+                  gshare_table[gs_index] = (gshare_table[gs_index] > SN) ? gshare_table[gs_index] - 1 : SN;
+              }
+              // Mask used to maintain the length of global history
+              gs_mask = (1 << ghistoryBits) - 1;
+              // Update global history using mask.
+              ghistory = ((ghistory << 1) | outcome) & gs_mask;
+              break;
     case TOURNAMENT:
         return tournament_train_predictor(pc, outcome);
     case CUSTOM:
