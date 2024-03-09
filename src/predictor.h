@@ -11,6 +11,9 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdbool.h>
+#include <string.h>
+
 
 //
 // Student Information
@@ -66,5 +69,13 @@ uint8_t make_prediction(uint32_t pc);
 // indicates that the branch was not taken)
 //
 void train_predictor(uint32_t pc, uint8_t outcome);
+
+uint8_t tournament_predict(uint32_t pc);
+
+void tournament_train_predictor(uint32_t pc, uint8_t outcome);
+
+uint8_t updatePrediction(uint8_t prediction, uint8_t outcome);
+
+uint8_t updateSelector(uint8_t selector, bool preferGlobal);
 
 #endif
