@@ -16,6 +16,18 @@
     - [Grading the custom predictor](#grading-the-custom-predictor)
   * [Turn-in Instructions](#turn-in-instructions)
 
+## Performance
+
+| Trace | Static | Gshare:10 | Tournament:10:10:8 | perceptron | 
+|-------|--------|----------|---------|---------|
+| fp_1  | 12.128 | 1.220     | 0.991|0.833|
+| fp_2  | 42.350 | 6.131     | 3.317|1.399|
+| int_1 | ---    | 22.024   |11.779|10.083|
+| int_2 |--------|----------|---------|---------|
+| mm_1  |--------|----------|---------|---------|
+| mm_2  |--------|----------|---------|---------|
+
+
 ## Introduction
 
 As we’ve discussed in class, branch prediction is critical to performance in modern processors.  An accurate branch predictor ensures that the front-end of the machine is capable of feeding the back-end with correct-path instructions. Beyond its criticality in processor execution, branch prediction is an interesting problem.  How do you make accurate predictions on little data using small, fast hardware structures.

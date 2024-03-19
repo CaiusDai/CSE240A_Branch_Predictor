@@ -7,6 +7,7 @@
 //========================================================//
 #include <stdio.h>
 #include "predictor.h"
+#include "perceptron.h"
 
 const char *studentName = "Haoyu Liu && ZIJIE DAI";
 const char *studentID   = "A59024691 && ";
@@ -43,6 +44,14 @@ uint8_t* localBHT; //localPredictionTable;
 uint8_t* globalBHT; //globalPredictionTable;
 uint8_t* selectorTable;
 uint8_t localOutcome, globalOutcome;
+
+/**********Perceptron**********/
+
+int **perceptronTable; // Perceptron table
+int threshold;
+int* history;
+float output;
+int mask_perceptron;
 
 
 //------------------------------------//
@@ -93,9 +102,41 @@ init_predictor()
         memset(selectorTable, WN, (1 << ghistoryBits) * sizeof(uint8_t));
         break;
     case CUSTOM:
-        break;
+        init_perceptron();
     default:
         break;
+    }
+}
+
+void
+init_perceptron(){
+
+    ghistoryBits = 12;
+    pcIndexBits = 10;
+
+    globalHistory = 0;
+
+    for (int i = 0; i < pcIndexBits; i++) {
+        mask_perceptron = (mask_perceptron << 1) + 1;
+    }
+
+    // Calculate the threshold to decide when to update weights
+    threshold = 1.93 * ghistoryBits + 14;
+
+    // Allocate and initialize perceptron table
+    int numPerceptrons = 1 << pcIndexBits;
+    perceptronTable = (int**)malloc(numPerceptrons * sizeof(int*));
+    for (int i = 0; i < numPerceptrons; ++i) {
+        perceptronTable[i] = (int*)malloc((ghistoryBits + 1) * sizeof(int)); // +1 for bias weight
+        for (int j = 0; j <= ghistoryBits; ++j) {
+            perceptronTable[i][j] = 0; // Initialize weights to 0
+        }
+    }
+
+    // init all history to -1 (not taken)
+    history = (int *)malloc(ghistoryBits * sizeof(int));
+    for (int i = 0; i < ghistoryBits; i++) {
+        history[i] = -1;
     }
 }
 
@@ -112,16 +153,17 @@ make_prediction(uint32_t pc)
   // Make a prediction based on the bpType
   switch (bpType) {
     case STATIC:
-      return TAKEN;
+        return TAKEN;
     case GSHARE:
-      gs_index = gs_get_table_index(pc);
-      // If the counter value is SN or WN, predict NOTTAKEN,otherwise predict TAKEN
-      return (gshare_table[gs_index] >= WT) ? TAKEN : NOTTAKEN;
+        gs_index = gs_get_table_index(pc);
+        // If the counter value is SN or WN, predict NOTTAKEN,otherwise predict TAKEN
+        return (gshare_table[gs_index] >= WT) ? TAKEN : NOTTAKEN;
     case TOURNAMENT:
         return tournament_predict(pc);
     case CUSTOM:
+        return perceptron_predict(pc);
     default:
-      break;
+        break;
   }
 
   // If there is not a compatable bpType then return NOTTAKEN
@@ -154,6 +196,26 @@ tournament_predict(uint32_t pc) {
 
 }
 
+uint8_t
+perceptron_predict(uint32_t pc){
+    int ghr = 0; // globalHistoryRegister
+    for (int i = 0; i < ghistoryBits; i++) {
+        ghr = ghr << 1;
+        if (history[i] == 1) {
+            ghr += 1;
+        }
+    }// Turn history array into integer ghr
+    uint32_t pcIndex = (pc & mask_perceptron) ^ (ghr & mask_perceptron);
+    int *weights = perceptronTable[pcIndex];
+    output = weights[ghistoryBits]; // bias
+
+    for (int i = 1; i <= ghistoryBits; ++i) {
+        output += weights[i] * history[i];
+    }
+
+    return output >= 0 ? TAKEN : NOTTAKEN;
+}
+
 // Train the predictor the last executed branch at PC 'pc' and with
 // outcome 'outcome' (true indicates that the branch was taken, false
 // indicates that the branch was not taken)
@@ -182,6 +244,7 @@ train_predictor(uint32_t pc, uint8_t outcome)
     case TOURNAMENT:
         return tournament_train_predictor(pc, outcome);
     case CUSTOM:
+        return perceptron_train_predictor(pc, outcome);
     default:
         break;
     }
@@ -191,8 +254,6 @@ train_predictor(uint32_t pc, uint8_t outcome)
 
 void
 tournament_train_predictor(uint32_t pc, uint8_t outcome) {
-
-
     uint8_t* selector = &selectorTable[globalHistory];
     // Update selector based on performance of local and global predictions
     if (localOutcome != outcome && globalOutcome == outcome) {
@@ -208,15 +269,49 @@ tournament_train_predictor(uint32_t pc, uint8_t outcome) {
     uint8_t* globalPrediction = &globalBHT[globalHistory];
 
     // Update local history and prediction
-    shift_prediction(localPrediction, outcome);
+    updatePrediction(localPrediction, outcome);
     localPHT[pcIndex] = ((localBHTIndex << 1) | outcome) & ((1 << lhistoryBits) - 1);
 
     // Update global history and prediction
-    shift_prediction(globalPrediction, outcome);
+    updatePrediction(globalPrediction, outcome);
     globalHistory = ((globalHistory << 1) | outcome) & ((1 << ghistoryBits) - 1);
 
     return;
 }
+
+void
+perceptron_train_predictor(uint32_t pc, uint8_t outcome){
+    int ghr = 0; // globalHistoryRegister
+    for (int i = 0; i < ghistoryBits; i++) {
+        ghr = ghr << 1;
+        if (history[i] == 1) {
+            ghr += 1;
+        }
+    } // Turn history array into integer ghr
+    uint32_t pcIndex = (pc & mask_perceptron) ^ (ghr & mask_perceptron);
+    int *weights = perceptronTable[pcIndex];
+
+    int prediction = perceptron_predict(pc);
+    int actual = (outcome == TAKEN) ? 1 : -1;
+
+    if (prediction != outcome || abs(output) <= threshold) {
+        weights[ghistoryBits] += actual;
+        for (int i = 1; i <= ghistoryBits; ++i) {
+        weights[i] += history[i] * actual;
+        }
+    }
+    // Update global history
+
+    for (int i = ghistoryBits; i > 0; i--) {
+        history[i] = history[i - 1];
+    }
+    history[0] = actual;
+
+}
+
+//------------------------------------//
+//       Tournament Helper Functions  //
+//------------------------------------//
 
 // Update the 2-bit saturating counter for predictions
 void updatePrediction(uint8_t *prediction, uint8_t outcome) {
@@ -229,17 +324,5 @@ void updatePrediction(uint8_t *prediction, uint8_t outcome) {
     else {
         if (*prediction > 0)
             (*prediction)--;
-    }
-}
-
-void shift_prediction(uint8_t *satuate, uint8_t outcome) {
-    if (outcome == NOTTAKEN) {
-        if (*satuate != SN) {
-            (*satuate)--;
-        }
-    } else {
-        if (*satuate != ST) {
-            (*satuate)++;
-        }
     }
 }
