@@ -76,6 +76,4 @@ void tournament_train_predictor(uint32_t pc, uint8_t outcome);
 
 void updatePrediction(uint8_t *prediction, uint8_t outcome);
 
-void shift_prediction(uint8_t *satuate, uint8_t outcome);
-
 #endif
