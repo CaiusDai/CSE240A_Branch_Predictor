@@ -8,10 +8,6 @@
 #include <stdio.h>
 #include "predictor.h"
 
-//
-// TODO:Student Information
-//
-
 const char *studentName = "Haoyu Liu && ZIJIE DAI";
 const char *studentID   = "A59024691 && ";
 const char *email       = "hal148@ucsd.edu && z2dai@ucsd.edu";
@@ -42,10 +38,11 @@ uint32_t ghistory;      // Global history register
 /**********Tournament**********/
 
 uint32_t globalHistory; // Global History Register
-uint32_t* localHistoryTable;
-uint8_t* localPredictionTable;
-uint8_t* globalPredictionTable;
+uint32_t* localPHT; //localHistoryTable;
+uint8_t* localBHT; //localPredictionTable;
+uint8_t* globalBHT; //globalPredictionTable;
 uint8_t* selectorTable;
+uint8_t localOutcome, globalOutcome;
 
 
 //------------------------------------//
@@ -79,21 +76,24 @@ init_predictor()
         for(int i = 0; i < (1<<ghistoryBits); i++){
           gshare_table[i] = WN;
         }
+        break;
     case TOURNAMENT:
         globalHistory = 0;
 
-        localHistoryTable = (uint32_t*)malloc((1 << pcIndexBits) * sizeof(uint32_t));
-        memset(localHistoryTable, 0, (1 << pcIndexBits) * sizeof(uint32_t));
+        localPHT = (uint32_t*)malloc((1 << pcIndexBits) * sizeof(uint32_t));
+        memset(localPHT, 0, (1 << pcIndexBits) * sizeof(uint32_t));
 
-        localPredictionTable = (uint8_t*)malloc((1 << lhistoryBits) * sizeof(uint8_t));
-        memset(localPredictionTable, NOTTAKEN, (1 << lhistoryBits) * sizeof(uint8_t));
+        localBHT = (uint8_t*)malloc((1 << lhistoryBits) * sizeof(uint8_t));
+        memset(localBHT, WN, (1 << lhistoryBits) * sizeof(uint8_t));
 
-        globalPredictionTable = (uint8_t*)malloc((1 << ghistoryBits) * sizeof(uint8_t));
-        memset(globalPredictionTable, NOTTAKEN, (1 << ghistoryBits) * sizeof(uint8_t));
+        globalBHT = (uint8_t*)malloc((1 << ghistoryBits) * sizeof(uint8_t));
+        memset(globalBHT, WN, (1 << ghistoryBits) * sizeof(uint8_t));
 
         selectorTable = (uint8_t*)malloc((1 << ghistoryBits) * sizeof(uint8_t));
-        memset(selectorTable, 0, (1 << ghistoryBits) * sizeof(uint8_t));
+        memset(selectorTable, WN, (1 << ghistoryBits) * sizeof(uint8_t));
+        break;
     case CUSTOM:
+        break;
     default:
         break;
     }
@@ -131,22 +131,25 @@ make_prediction(uint32_t pc)
 uint8_t
 tournament_predict(uint32_t pc) {
 
-    // Predictor 1: Simple BHT
+    // Predictor 1: Local
     uint32_t pcIndex = pc & ((1 << pcIndexBits) - 1);
-    uint32_t localHistory = localHistoryTable[pcIndex];
-    uint32_t localPrediction = localPredictionTable[localHistory];
+    uint32_t localHistory = localPHT[pcIndex];
+    uint32_t localPrediction = localBHT[localHistory];
+    localOutcome = ((localPrediction == WN || localPrediction == SN) ? NOTTAKEN : TAKEN);
 
-    // Predictor 2: Correlated Predictor
-    uint32_t globalPrediction = globalPredictionTable[globalHistory];
+    // Predictor 2: Global
+    uint32_t globalBHTIndex = (globalHistory) & ((1 << ghistoryBits) - 1);
+    uint32_t globalPrediction = globalBHT[globalBHTIndex];
+    globalOutcome = ((globalPrediction == WN || globalPrediction == SN) ? NOTTAKEN : TAKEN);
 
-    uint32_t selector = selectorTable[globalHistory];
+    uint32_t selector = selectorTable[globalBHTIndex];
 
     // Choose prediction based on selector value
     if (selector < 2) {
-        return localPrediction;
+        return globalOutcome;
     }
     else {
-        return globalPrediction;
+        return localOutcome;
     }
 
 }
@@ -191,27 +194,27 @@ tournament_train_predictor(uint32_t pc, uint8_t outcome) {
     
     uint32_t pcIndex = pc & ((1 << pcIndexBits) - 1); // get the lower pcIndexBits bits of PC
 
-    uint32_t localHistory = localHistoryTable[pcIndex];
-    uint32_t localPrediction = localPredictionTable[localHistory];
+    uint32_t localBHTIndex  = localPHT[pcIndex];
+    uint32_t localPrediction = localBHT[localBHTIndex];
 
-    uint32_t globalPrediction = globalPredictionTable[globalHistory];
+    uint32_t globalPrediction = globalBHT[globalHistory];
 
     uint32_t selector = selectorTable[globalHistory];
 
     // Update local history and prediction
-    localHistoryTable[pcIndex] = ((localHistory << 1) | outcome) & ((1 << lhistoryBits) - 1);
-    localPredictionTable[localHistory] = updatePrediction(localPrediction, outcome);
+    localPHT[pcIndex] = ((localBHTIndex << 1) | outcome) & ((1 << lhistoryBits) - 1);
+    localBHT[localBHTIndex] = updatePrediction(localPrediction, outcome);
 
     // Update global history and prediction
     globalHistory = ((globalHistory << 1) | outcome) & ((1 << ghistoryBits) - 1);
-    globalPredictionTable[globalHistory] = updatePrediction(globalPrediction, outcome);
+    globalBHT[globalHistory] = updatePrediction(globalPrediction, outcome);
 
     // Update selector based on performance of local and global predictions
-    if (localPrediction != outcome && globalPrediction == outcome) {
-        selectorTable[globalHistory] = updateSelector(selector, true); // Favor global
+    if (localOutcome != outcome && globalOutcome == outcome) {
+        selectorTable[globalHistory] = updatePrediction(selector, NOTTAKEN);
     }
-    else if (localPrediction == outcome && globalPrediction != outcome) {
-        selectorTable[globalHistory] = updateSelector(selector, false); // Favor local
+    else if (localOutcome == outcome && globalOutcome != outcome) {
+        selectorTable[globalHistory] = updatePrediction(selector, TAKEN);
     }
 
 
@@ -220,7 +223,7 @@ tournament_train_predictor(uint32_t pc, uint8_t outcome) {
 // Update the 2-bit saturating counter for predictions
 uint8_t updatePrediction(uint8_t prediction, uint8_t outcome) {
     // If outcome is TAKEN
-    if (outcome) {
+    if (outcome == TAKEN) {
         if (prediction < 3)
             prediction++;
     }
@@ -231,22 +234,4 @@ uint8_t updatePrediction(uint8_t prediction, uint8_t outcome) {
     }
 
     return prediction;
-}
-
-// Update the 2-bit saturating counter for the selector
-uint8_t updateSelector(uint8_t selector, bool preferGlobal) {
-    // If global predictor was better and selector is not strongly global (3)
-    if (preferGlobal) {
-        if (selector < 3) {
-            selector++;
-        }
-    }
-    // If local predictor was better and selector is not strongly local (0)
-    else {
-        if (selector > 0) {
-            selector--;
-        }
-    }
-    
-    return selector;
 }
