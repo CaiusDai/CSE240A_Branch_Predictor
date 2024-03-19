@@ -74,8 +74,8 @@ uint8_t tournament_predict(uint32_t pc);
 
 void tournament_train_predictor(uint32_t pc, uint8_t outcome);
 
-uint8_t updatePrediction(uint8_t prediction, uint8_t outcome);
+void updatePrediction(uint8_t *prediction, uint8_t outcome);
 
-uint8_t updateSelector(uint8_t selector, bool preferGlobal);
+void shift_prediction(uint8_t *satuate, uint8_t outcome);
 
 #endif

@@ -191,47 +191,55 @@ train_predictor(uint32_t pc, uint8_t outcome)
 
 void
 tournament_train_predictor(uint32_t pc, uint8_t outcome) {
-    
-    uint32_t pcIndex = pc & ((1 << pcIndexBits) - 1); // get the lower pcIndexBits bits of PC
 
-    uint32_t localBHTIndex  = localPHT[pcIndex];
-    uint32_t localPrediction = localBHT[localBHTIndex];
 
-    uint32_t globalPrediction = globalBHT[globalHistory];
-
-    uint32_t selector = selectorTable[globalHistory];
-
-    // Update local history and prediction
-    localPHT[pcIndex] = ((localBHTIndex << 1) | outcome) & ((1 << lhistoryBits) - 1);
-    localBHT[localBHTIndex] = updatePrediction(localPrediction, outcome);
-
-    // Update global history and prediction
-    globalHistory = ((globalHistory << 1) | outcome) & ((1 << ghistoryBits) - 1);
-    globalBHT[globalHistory] = updatePrediction(globalPrediction, outcome);
-
+    uint8_t* selector = &selectorTable[globalHistory];
     // Update selector based on performance of local and global predictions
     if (localOutcome != outcome && globalOutcome == outcome) {
-        selectorTable[globalHistory] = updatePrediction(selector, NOTTAKEN);
+        updatePrediction(selector, NOTTAKEN);
     }
     else if (localOutcome == outcome && globalOutcome != outcome) {
-        selectorTable[globalHistory] = updatePrediction(selector, TAKEN);
+        updatePrediction(selector, TAKEN);
     }
 
+    uint32_t pcIndex = pc & ((1 << pcIndexBits) - 1);
+    uint32_t localBHTIndex = localPHT[pcIndex];
+    uint8_t* localPrediction = &localBHT[localBHTIndex];
+    uint8_t* globalPrediction = &globalBHT[globalHistory];
 
+    // Update local history and prediction
+    shift_prediction(localPrediction, outcome);
+    localPHT[pcIndex] = ((localBHTIndex << 1) | outcome) & ((1 << lhistoryBits) - 1);
+
+    // Update global history and prediction
+    shift_prediction(globalPrediction, outcome);
+    globalHistory = ((globalHistory << 1) | outcome) & ((1 << ghistoryBits) - 1);
+
+    return;
 }
 
 // Update the 2-bit saturating counter for predictions
-uint8_t updatePrediction(uint8_t prediction, uint8_t outcome) {
+void updatePrediction(uint8_t *prediction, uint8_t outcome) {
     // If outcome is TAKEN
     if (outcome == TAKEN) {
-        if (prediction < 3)
-            prediction++;
+        if (*prediction < 3)
+            (*prediction)++;
     }
     // If outcome is NOT TAKEN
     else {
-        if (prediction > 0)
-            prediction--;
+        if (*prediction > 0)
+            (*prediction)--;
     }
+}
 
-    return prediction;
+void shift_prediction(uint8_t *satuate, uint8_t outcome) {
+    if (outcome == NOTTAKEN) {
+        if (*satuate != SN) {
+            (*satuate)--;
+        }
+    } else {
+        if (*satuate != ST) {
+            (*satuate)++;
+        }
+    }
 }
