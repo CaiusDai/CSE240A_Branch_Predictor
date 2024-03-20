@@ -47,11 +47,38 @@ uint8_t localOutcome, globalOutcome;
 
 /**********Perceptron**********/
 
-int **perceptronTable; // Perceptron table
-int threshold;
-int* history;
-float output;
-int mask_perceptron;
+//int **perceptronTable; // Perceptron table
+//int threshold;
+//int* history;
+//float output;
+//int mask_perceptron;
+
+// Number of weights
+#define numWeights 28
+
+// Total budget of the predictor
+#define Budget (64256)
+
+// Threshold values
+#define ThetaMax (numWeights * 1.93 + 14)
+#define ThetaMin ( -1*ThetaMax )
+
+// Number of bits in a weight
+#define BitsInWeight 8
+#define MAXVAL 127
+#define MINVAL -128
+
+// calculation of entries of perceptron table
+#define SizeOfPerceptron ((numWeights + 1) * BitsInWeight)
+#define NumberPerceptron ((int)(Budget / SizeOfPerceptron))
+
+int perceptron[NumberPerceptron][numWeights];
+int bias[NumberPerceptron];
+int GHR;
+int index;
+int output;
+bool prediction;
+
 
 
 //------------------------------------//
@@ -110,34 +137,10 @@ init_predictor()
 
 void
 init_perceptron(){
-
-    ghistoryBits = 12;
-    pcIndexBits = 10;
-
-    globalHistory = 0;
-
-    for (int i = 0; i < pcIndexBits; i++) {
-        mask_perceptron = (mask_perceptron << 1) + 1;
-    }
-
-    // Calculate the threshold to decide when to update weights
-    threshold = 1.93 * ghistoryBits + 14;
-
-    // Allocate and initialize perceptron table
-    int numPerceptrons = 1 << pcIndexBits;
-    perceptronTable = (int**)malloc(numPerceptrons * sizeof(int*));
-    for (int i = 0; i < numPerceptrons; ++i) {
-        perceptronTable[i] = (int*)malloc((ghistoryBits + 1) * sizeof(int)); // +1 for bias weight
-        for (int j = 0; j <= ghistoryBits; ++j) {
-            perceptronTable[i][j] = 0; // Initialize weights to 0
-        }
-    }
-
-    // init all history to -1 (not taken)
-    history = (int *)malloc(ghistoryBits * sizeof(int));
-    for (int i = 0; i < ghistoryBits; i++) {
-        history[i] = -1;
-    }
+      for(int i = 0; i < NumberPerceptron; i++)
+        for (int j = 0 ; j <= numWeights ; j++)
+            perceptron[i][j] = 0;
+      GHR = 0;
 }
 
 // Make a prediction for conditional branch instruction at PC 'pc'
@@ -198,22 +201,34 @@ tournament_predict(uint32_t pc) {
 
 uint8_t
 perceptron_predict(uint32_t pc){
-    int ghr = 0; // globalHistoryRegister
-    for (int i = 0; i < ghistoryBits; i++) {
-        ghr = ghr << 1;
-        if (history[i] == 1) {
-            ghr += 1;
-        }
-    }// Turn history array into integer ghr
-    uint32_t pcIndex = (pc & mask_perceptron) ^ (ghr & mask_perceptron);
-    int *weights = perceptronTable[pcIndex];
-    output = weights[ghistoryBits]; // bias
+      prediction = NOTTAKEN;
 
-    for (int i = 1; i <= ghistoryBits; ++i) {
-        output += weights[i] * history[i];
-    }
+      // hash function to map pc to a row in the perceptron table
+      index = pc % NumberPerceptron;
+      int bit = 1;
+      output = bias[index];
+      for(int i = 0; i < numWeights; i++){
+          int result;
+    	  // checking jth bit of GHR
+    	  if((GHR & bit) == 0)
+    		result = -1;
+    	  else
+    		result = 1;
 
-    return output >= 0 ? TAKEN : NOTTAKEN;
+    	  // dot product calculation
+    	  output += perceptron[index][i] * result;
+
+    	  // used in finding out jth bit of GHR above
+    	  bit = bit << 1;
+    	}
+
+      // making a prediction
+      if( output >= 0 )
+    	prediction = 1;
+      else
+    	prediction = 0;
+
+     return prediction;
 }
 
 // Train the predictor the last executed branch at PC 'pc' and with
@@ -281,31 +296,51 @@ tournament_train_predictor(uint32_t pc, uint8_t outcome) {
 
 void
 perceptron_train_predictor(uint32_t pc, uint8_t outcome){
-    int ghr = 0; // globalHistoryRegister
-    for (int i = 0; i < ghistoryBits; i++) {
-        ghr = ghr << 1;
-        if (history[i] == 1) {
-            ghr += 1;
+
+     // t used to update bias and numerical outcome is used to update GHR
+     int bia;
+     if(outcome == TAKEN){
+        bia = 1;
+     }
+     else{
+        bia = -1;
+     }
+
+     int bit = 1;
+
+     // updating weights and bias
+     if( outcome != prediction || (output < ThetaMax && output > ThetaMin) ){
+
+        // checking whether bias is within a value that is 8 bit long
+        if ( bias[index] > MINVAL && bias[index] < MAXVAL) {
+            // updating bias
+            bias[index] = bias[index] + bia;
         }
-    } // Turn history array into integer ghr
-    uint32_t pcIndex = (pc & mask_perceptron) ^ (ghr & mask_perceptron);
-    int *weights = perceptronTable[pcIndex];
 
-    int prediction = perceptron_predict(pc);
-    int actual = (outcome == TAKEN) ? 1 : -1;
+        for(int i = 0; i < numWeights; i++){
+            int result;
+            // checking whether correlation is positive or negative
+            if( ( ( (GHR & bit) != 0) && (outcome == 1) ) ||  ( ((GHR & bit) == 0) && (outcome == 0) ) )
+                result = 1;
+            else
+                result = -1;
 
-    if (prediction != outcome || abs(output) <= threshold) {
-        weights[ghistoryBits] += actual;
-        for (int i = 1; i <= ghistoryBits; ++i) {
-        weights[i] += history[i] * actual;
+            // checking whether ith weight at index is within a value that is 8 bit long
+            if ( perceptron[index][i] > MINVAL && perceptron[index][i] < MAXVAL ) {
+                // updating weight
+                perceptron[index][i] = perceptron[index][i] + result;
+            }
+
+            // j used in finding out jth bit of GHR
+            bit = bit << 1;
         }
-    }
-    // Update global history
 
-    for (int i = ghistoryBits; i > 0; i--) {
-        history[i] = history[i - 1];
-    }
-    history[0] = actual;
+     }
+
+     // updating .. we take care of number of bits in GHR by doing an & with j everywhere we use GHR
+     // in any case since it is an int it is just 32 bits well under 256 bits reserved for GHR
+     GHR = ( GHR << 1 ) ;
+     GHR = (GHR | outcome);
 
 }
 
