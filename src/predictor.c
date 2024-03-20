@@ -47,13 +47,6 @@ uint8_t localOutcome, globalOutcome;
 
 /**********Perceptron**********/
 
-//int **perceptronTable; // Perceptron table
-//int threshold;
-//int* history;
-//float output;
-//int mask_perceptron;
-
-// Number of weights
 #define numWeights 28
 
 // Total budget of the predictor
@@ -209,16 +202,14 @@ perceptron_predict(uint32_t pc){
       output = bias[index];
       for(int i = 0; i < numWeights; i++){
           int result;
-    	  // checking jth bit of GHR
+
     	  if((GHR & bit) == 0)
     		result = -1;
     	  else
     		result = 1;
 
-    	  // dot product calculation
     	  output += perceptron[index][i] * result;
 
-    	  // used in finding out jth bit of GHR above
     	  bit = bit << 1;
     	}
 
@@ -297,7 +288,7 @@ tournament_train_predictor(uint32_t pc, uint8_t outcome) {
 void
 perceptron_train_predictor(uint32_t pc, uint8_t outcome){
 
-     // t used to update bias and numerical outcome is used to update GHR
+     // update bias
      int bia;
      if(outcome == TAKEN){
         bia = 1;
@@ -331,14 +322,11 @@ perceptron_train_predictor(uint32_t pc, uint8_t outcome){
                 perceptron[index][i] = perceptron[index][i] + result;
             }
 
-            // j used in finding out jth bit of GHR
+            //finding out bit-th bit of GHR
             bit = bit << 1;
         }
 
      }
-
-     // updating .. we take care of number of bits in GHR by doing an & with j everywhere we use GHR
-     // in any case since it is an int it is just 32 bits well under 256 bits reserved for GHR
      GHR = ( GHR << 1 ) ;
      GHR = (GHR | outcome);
 
